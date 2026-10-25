@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Overlay Lagu Spotify</title>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,700&display=swap" rel="stylesheet">
+<style>
+  :root { --bg:#15121b; --panel:#1f1b28; --line:#383247; --ink:#f3f0f7; --mute:#a59fb3; --accent:#e9c46a; --bad:#ff8a80; }
+  * { box-sizing:border-box; margin:0; }
+  body { background:var(--bg); color:var(--ink); font:400 1rem/1.55 'Bricolage Grotesque',system-ui,sans-serif; padding:2.5rem 1.25rem 4rem; }
+  main { max-width:62rem; margin:0 auto; }
+  h1 { font-size:clamp(2rem,5vw,3.2rem); line-height:1.05; font-weight:700; letter-spacing:-.02em; max-width:16ch; }
+  .sub { color:var(--mute); margin:.8rem 0 2.2rem; max-width:44ch; }
+  a { color:var(--accent); }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:1rem; padding:1.4rem; }
+  ol { list-style:none; padding:0; display:grid; gap:1.6rem; counter-reset:s; max-width:40rem; }
+  ol > li { counter-increment:s; padding-left:2.4rem; position:relative; }
+  ol > li::before { content:counter(s); position:absolute; left:0; top:0; width:1.7rem; height:1.7rem; border-radius:50%;
+    background:var(--accent); color:#1a1405; font-weight:700; display:grid; place-items:center; font-size:.9rem; }
+  h2 { font-size:1.1rem; font-weight:600; margin-bottom:.35rem; }
+  p.hint { color:var(--mute); font-size:.92rem; }
+  .row { display:flex; gap:.5rem; margin-top:.6rem; }
+  code, input, textarea { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:.85rem; }
+  input[type=text], input[type=password], input[type=number], textarea { width:100%; background:#14111a; color:var(--ink);
+    border:1px solid var(--line); border-radius:.6rem; padding:.65rem .75rem; }
+  input:focus-visible, button:focus-visible, textarea:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  button { background:var(--accent); color:#1a1405; border:0; border-radius:.6rem; padding:.65rem 1rem; font:600 .95rem 'Bricolage Grotesque',sans-serif; cursor:pointer; white-space:nowrap; }
+  button.ghost { background:transparent; color:var(--ink); border:1px solid var(--line); }
+  .fields { display:grid; gap:.6rem; margin-top:.6rem; }
+  .err { color:var(--bad); margin-top:.6rem; min-height:1.2em; font-size:.92rem; }
+  #ready { display:grid; grid-template-columns:minmax(0,22rem) minmax(0,1fr); gap:1.4rem; align-items:start; }
+  @media (max-width:52rem){ #ready{grid-template-columns:1fr} }
+  .opt { display:grid; gap:.3rem; margin-bottom:1rem; }
+  .opt label { font-weight:600; font-size:.92rem; }
+  .check { display:flex; gap:.5rem; align-items:center; font-weight:400 !important; }
+  .stage { overflow:auto; border-radius:.8rem; border:1px solid var(--line);
+    background:conic-gradient(#2a2535 25%,#201c2a 0 50%,#2a2535 0 75%,#201c2a 0) 0 0/20px 20px; }
+  iframe { width:560px; height:400px; border:0; display:block; }
+  textarea { resize:none; height:5.5rem; word-break:break-all; }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Lagu dan lirik Spotify di stream kamu</h1>
+  <p class="sub">Hubungkan akun Spotify sekali, lalu pasang satu link di OBS.</p>
+
+  <section id="setup" class="panel">
+    <ol>
+      <li>
+        <h2>Buat app di Spotify</h2>
+        <p class="hint">Buka <a href="https://developer.spotify.com/dashboard" target="_blank" rel="noopener">developer.spotify.com/dashboard</a>, pilih Create app, lalu isi kolom Redirect URI dengan alamat ini.</p>
+        <div class="row"><input type="text" id="ruri" readonly><button type="button" class="ghost" id="copyRuri">Salin</button></div>
+      </li>
+      <li>
+        <h2>Tempel Client ID dan Client Secret</h2>
+        <p class="hint">Keduanya ada di Settings pada app yang baru dibuat.</p>
+        <div class="fields">
+          <input type="text" id="cid" placeholder="Client ID" autocomplete="off" spellcheck="false">
+          <input type="password" id="csec" placeholder="Client Secret" autocomplete="off" spellcheck="false">
+        </div>
+      </li>
+      <li>
+        <h2>Hubungkan</h2>
+        <button type="button" id="connect">Hubungkan Spotify</button>
+        <div class="err" id="err" role="alert"></div>
+      </li>
+    </ol>
+  </section>
+
+  <section id="ready" hidden>
+    <div class="panel">
+      <div class="opt"><label class="check"><input type="checkbox" id="oLyrics" checked> Tampilkan lirik</label></div>
+      <div class="opt"><label for="oScale">Ukuran</label><input type="number" id="oScale" value="1" min="0.5" max="3" step="0.1"></div>
+      <div class="opt"><label for="oOffset">Geser sinkron lirik (ms)</label>
+        <input type="number" id="oOffset" value="0" step="100">
+        <p class="hint">Negatif = lirik lebih cepat, positif = lebih lambat.</p></div>
+      <div class="opt"><label class="check"><input type="checkbox" id="oSave"> Hemat kuota hosting</label>
+        <p class="hint">Cek lagu tiap 5 detik, bukan 2 detik. Disarankan di Netlify.</p></div>
+      <div class="opt"><label class="check"><input type="checkbox" id="oAuto" checked> Warna otomatis dari cover</label>
+        <input type="text" id="oAccent" value="e9c46a" maxlength="6" disabled aria-label="Kode warna hex"></div>
+      <div class="opt"><label for="url">Link untuk OBS (Browser Source, 560 × 400)</label>
+        <textarea id="url" readonly></textarea>
+        <div class="row"><button type="button" id="copyUrl">Salin link</button><button type="button" class="ghost" id="reset">Ganti akun</button></div>
+        <p class="hint">Link ini berisi akses ke akunmu. Jangan dibagikan dan jangan ditampilkan di layar stream.</p></div>
+    </div>
+    <div>
+      <div class="stage"><iframe id="preview" title="Pratinjau overlay"></iframe></div>
+      <p class="hint" style="margin-top:.6rem">Pratinjau tampil kalau Spotify sedang memutar lagu.</p>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let token = null;
+try {
+  const h = new URLSearchParams(location.hash.slice(1));
+  if (h.get('t')) { token = h.get('t'); localStorage.setItem('overlay_token', token); history.replaceState(null, '', location.pathname); }
+  else token = localStorage.getItem('overlay_token');
+} catch {}
+
+$('ruri').value = location.origin + '/callback';
+$('copyRuri').onclick = () => copy($('ruri').value, $('copyRuri'));
+
+function copy(text, btn) {
+  navigator.clipboard.writeText(text).then(() => {
+    const old = btn.textContent; btn.textContent = 'Tersalin'; setTimeout(() => (btn.textContent = old), 1400);
+  });
+}
+
+$('connect').onclick = async () => {
+  $('err').textContent = '';
+  try {
+    const r = await fetch('/api/connect', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clientId: $('cid').value, clientSecret: $('csec').value }) });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error);
+    location.href = d.url;
+  } catch (e) { $('err').textContent = e.message || 'Gagal menghubungi server.'; }
+};
+
+function buildUrl() {
+  const p = new URLSearchParams({ t: token });
+  if (!$('oLyrics').checked) p.set('lyrics', '0');
+  if (+$('oScale').value && +$('oScale').value !== 1) p.set('scale', $('oScale').value);
+  if (+$('oOffset').value) p.set('offset', $('oOffset').value);
+  if ($('oSave').checked) p.set('poll', '5');
+  if (!$('oAuto').checked && /^[0-9a-fA-F]{6}$/.test($('oAccent').value)) p.set('accent', $('oAccent').value);
+  return location.origin + '/overlay.html?' + p;
+}
+
+let timer;
+function refresh() {
+  $('oAccent').disabled = $('oAuto').checked;
+  const u = buildUrl();
+  $('url').value = u;
+  clearTimeout(timer);
+  timer = setTimeout(() => { $('preview').src = u + '&hideIdle=0'; }, 400);
+}
+
+if (token) {
+  $('setup').hidden = true; $('ready').hidden = false;
+  ['oLyrics', 'oScale', 'oOffset', 'oSave', 'oAuto', 'oAccent'].forEach((id) => $(id).addEventListener('input', refresh));
+  $('copyUrl').onclick = () => copy($('url').value, $('copyUrl'));
+  $('reset').onclick = () => { try { localStorage.removeItem('overlay_token'); } catch {} location.reload(); };
+  refresh();
+}
+</script>
+</body>
+</html>

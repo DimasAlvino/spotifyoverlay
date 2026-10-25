@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<title>Now Playing Overlay</title>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&display=swap" rel="stylesheet">
+<style>
+  :root { --accent:#e9c46a; --ink:#f6f4ef; --glass:rgba(17,16,22,.74); }
+  * { box-sizing:border-box; margin:0; }
+  html,body { background:transparent; overflow:hidden; color:var(--ink);
+    font-family:'Bricolage Grotesque',system-ui,sans-serif; }
+  #root { width:30rem; padding:1rem; opacity:0; transform:translateY(.5rem);
+    transition:opacity .6s, transform .6s; }
+  #root.on { opacity:1; transform:none; }
+  .card, .lyrics { background:var(--glass); backdrop-filter:blur(14px); border-radius:1.1rem; }
+  .card { display:grid; grid-template-columns:5.5rem 1fr; gap:1rem; padding:.9rem; align-items:center; }
+  .cover { width:5.5rem; height:5.5rem; border-radius:.65rem; object-fit:cover; background:#222; }
+  .meta { min-width:0; }
+  .title { font-size:1.3rem; font-weight:700; line-height:1.15; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .artist { font-size:.95rem; opacity:.7; margin-top:.15rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .bar { height:.25rem; border-radius:1rem; background:rgba(255,255,255,.16); margin-top:.8rem; overflow:hidden; }
+  .fill { height:100%; width:0; background:var(--accent); }
+  .time { display:flex; justify-content:space-between; font-size:.7rem; opacity:.55; margin-top:.3rem; font-variant-numeric:tabular-nums; }
+  .lyrics { margin-top:.6rem; height:10rem; overflow:hidden; display:none; position:relative;
+    -webkit-mask-image:linear-gradient(transparent,#000 22%,#000 78%,transparent);
+            mask-image:linear-gradient(transparent,#000 22%,#000 78%,transparent); }
+  .lyrics.has { display:block; }
+  .lines { transition:transform .45s cubic-bezier(.3,.8,.3,1); padding:0 1.1rem; }
+  .line { height:2rem; line-height:2rem; font-size:1.05rem; font-weight:500; opacity:.32;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; transition:opacity .3s, color .3s; }
+  .line.on { opacity:1; font-weight:700; color:var(--accent); }
+  @media (prefers-reduced-motion:reduce){ #root,.lines{transition:none} }
+</style>
+</head>
+<body>
+<div id="root">
+  <div class="card">
+    <img class="cover" id="cover" alt="">
+    <div class="meta">
+      <div class="title" id="title"></div>
+      <div class="artist" id="artist"></div>
+      <div class="bar"><div class="fill" id="fill"></div></div>
+      <div class="time"><span id="cur">0:00</span><span id="dur">0:00</span></div>
+    </div>
+  </div>
+  <div class="lyrics" id="lyrics"><div class="lines" id="lines"></div></div>
+</div>
+
+<script>
+/* Parameter URL:
+   ?t=TOKEN          token dari dashboard (wajib)
+   ?lyrics=0         matikan lirik
+   ?scale=1.5        perbesar/perkecil seluruh overlay
+   ?accent=ff5c8a    warna aksen manual (default: otomatis dari cover)
+   ?offset=-300      geser sinkron lirik (ms, negatif = lebih cepat)
+   ?hideIdle=0       tetap tampil saat tidak ada lagu
+   ?poll=5           cek lagu tiap N detik (default 2) */
+const q = new URLSearchParams(location.search);
+const $ = (id) => document.getElementById(id);
+const showLyrics = q.get('lyrics') !== '0';
+const offset = parseInt(q.get('offset') || '0', 10);
+const hideIdle = q.get('hideIdle') !== '0';
+const pollMs = Math.max(1000, parseFloat(q.get('poll') || '2') * 1000);
+document.documentElement.style.fontSize = 16 * parseFloat(q.get('scale') || '1') + 'px';
+if (q.get('accent')) document.documentElement.style.setProperty('--accent', '#' + q.get('accent').replace('#',''));
+
+let np = null, base = 0, trackId = null, lines = [], active = -2, shownSec = -1;
+
+const fmt = (ms) => { const s = Math.max(0, Math.floor(ms / 1000)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
+
+async function poll() {
+  try {
+    np = await (await fetch('/api/now-playing?t=' + encodeURIComponent(q.get('t') || ''))).json();
+    base = performance.now() - (np.ageMs || 0);
+    if (np.id && np.id !== trackId) onTrack(np);
+  } catch {}
+  setTimeout(poll, pollMs);
+}
+
+function onTrack(t) {
+  trackId = t.id;
+  $('title').textContent = t.title;
+  $('artist').textContent = t.artist;
+  $('cover').src = t.cover || '';
+  if (!q.get('accent')) accentFrom(t.cover);
+  lines = []; active = -2; renderLyrics();
+  if (!showLyrics) return;
+  const p = new URLSearchParams({ id: t.id, title: t.title, artist: t.artist, album: t.album, duration: t.durationMs });
+  fetch('/api/lyrics?' + p).then((r) => r.json()).then((d) => {
+    if (trackId !== t.id) return;
+    lines = d.lines || []; renderLyrics();
+  });
+}
+
+function renderLyrics() {
+  $('lyrics').classList.toggle('has', showLyrics && lines.length > 0);
+  $('lines').innerHTML = lines.map((l) => `<div class="line">${(l.text || '♪').replace(/</g, '&lt;')}</div>`).join('');
+  active = -2;
+}
+
+async function accentFrom(url) {
+  if (!url) return;
+  try {
+    const img = new Image();
+    img.src = '/api/cover?url=' + encodeURIComponent(url);
+    await img.decode();
+    const c = document.createElement('canvas'); c.width = c.height = 16;
+    const x = c.getContext('2d'); x.drawImage(img, 0, 0, 16, 16);
+    const d = x.getImageData(0, 0, 16, 16).data;
+    let best = [233, 196, 106], score = -1;
+    for (let i = 0; i < d.length; i += 4) {
+      const [r, g, b] = [d[i], d[i + 1], d[i + 2]];
+      const max = Math.max(r, g, b), min = Math.min(r, g, b);
+      const s = ((max - min) / (max || 1)) * (max / 255);
+      if (s > score) { score = s; best = [r, g, b]; }
+    }
+    const mix = best.map((v) => Math.round(v + (255 - v) * 0.3));
+    document.documentElement.style.setProperty('--accent', `rgb(${mix})`);
+  } catch {}
+}
+
+function frame() {
+  const live = np && np.id;
+  $('root').classList.toggle('on', !!live || !hideIdle);
+  if (live) {
+    const p = Math.min(np.durationMs, np.progressMs + (np.isPlaying ? performance.now() - base : 0));
+    $('fill').style.width = (p / np.durationMs) * 100 + '%';
+    const sec = Math.floor(p / 1000);
+    if (sec !== shownSec) { shownSec = sec; $('cur').textContent = fmt(p); $('dur').textContent = fmt(np.durationMs); }
+    if (lines.length) {
+      const t = p + offset;
+      let i = -1;
+      for (let k = 0; k < lines.length && lines[k].t <= t; k++) i = k;
+      if (i !== active) {
+        const els = $('lines').children;
+        if (els[active]) els[active].classList.remove('on');
+        if (els[i]) els[i].classList.add('on');
+        $('lines').style.transform = `translateY(${(2 - Math.max(i, 0)) * 2}rem)`;
+        active = i;
+      }
+    }
+  }
+  requestAnimationFrame(frame);
+}
+
+poll(); frame();
+</script>
+</body>
+</html>
